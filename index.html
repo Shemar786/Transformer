@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#f9f4e5">
+  <meta name="description" content="Harvest by day, drive a Toyota Probox route taxi by night, and work your way to the cash goal in this Jamaican arcade runner.">
+  <title>Transformer Money</title>
+  <link rel="stylesheet" href="styles.css">
+  <script src="scene.js" defer></script>
+  <script src="game.js" defer></script>
+</head>
+<body>
+  <header class="masthead">
+    <div class="shell header-inner">
+      <a class="brand" href="./" aria-label="Transformer Money home"><span class="brand-icon" aria-hidden="true">ϟ</span> TRANSFORMER <span>MONEY</span></a>
+      <button type="button" class="help-button" id="help-button">How to play <span aria-hidden="true">↗</span></button>
+    </div>
+  </header>
+  <main class="shell">
+    <div class="page-head">
+      <div><p class="eyebrow locale"><span class="flag" role="img" aria-label="Jamaican flag"></span> JAMAICA · ARCADE RUNNER</p>
+      <h1>Transformer Money</h1></div>
+      <p>Farm by day. Drive by night.</p>
+    </div>
+    <div class="layout">
+      <section class="game" aria-label="Transformer Money game">
+        <div class="stage" id="stage">
+          <canvas id="track" width="1000" height="625" aria-label="Three-lane game track" tabindex="0"></canvas>
+          <div class="start-screen" id="intro">
+            <div class="start-content">
+              <p class="intro-kicker"><span></span> FIRST SHIFT</p>
+              <h2><span>From crops</span><span>to cash.</span></h2>
+              <p>Pick up harvests by day, then earn fares in your Toyota Probox after dark.</p>
+              <button type="button" class="primary" id="start">Start game <span aria-hidden="true">→</span></button>
+            </div>
+          </div>
+          <div class="hud" id="hud" hidden>
+            <div class="hud-shift"><span id="shift-icon" aria-hidden="true">☀</span><span id="shift-label">Farm shift</span><strong id="clock">24s</strong></div>
+            <span id="combo" class="combo" hidden></span>
+            <button type="button" id="pause" aria-label="Pause game" title="Pause game">Ⅱ</button>
+          </div>
+          <div class="stage-message" id="stage-message" hidden>
+            <div id="driver-transition" class="driver-transition" hidden><img src="assets/farmer.webp" alt=""><span aria-hidden="true">→</span><img src="assets/probox.webp" alt=""></div>
+            <p class="eyebrow" id="message-kicker"></p>
+            <h2 id="message-title"></h2>
+            <p id="message-copy"></p>
+            <button type="button" class="primary" id="resume" hidden>Resume <span aria-hidden="true">→</span></button>
+          </div>
+        </div>
+        <div class="control-strip">
+          <div class="controls-hint"><span><kbd>←</kbd><kbd>→</kbd> Change lanes</span><span><kbd>↑</kbd> Jump on foot</span></div>
+          <div class="touch-controls" aria-label="Driving controls">
+            <button type="button" data-move="-1" aria-label="Move left">←</button>
+            <button type="button" data-move="jump" aria-label="Jump">↑</button>
+            <button type="button" data-move="1" aria-label="Move right">→</button>
+          </div>
+          <button type="button" class="sound-button" id="sound" aria-pressed="false">♪ <span>Sound off</span></button>
+        </div>
+      </section>
+      <aside class="sidebar">
+        <section class="cash-card" aria-labelledby="goal-title">
+          <div class="cash-heading"><h2 class="eyebrow" id="goal-title">YOUR CASH</h2><span class="cash-icon" aria-hidden="true">$</span></div>
+          <p class="cash" id="cash">J$0</p>
+          <progress id="progress" value="0" max="2500" aria-label="Cash goal progress"></progress>
+          <p class="target"><span id="progress-text">0% to goal</span><strong>J$2,500 goal</strong></p>
+          <div class="cash-footer"><span>Personal best</span><strong id="best">J$0</strong></div>
+        </section>
+        <section class="shifts" aria-labelledby="shift-title">
+          <h2 id="shift-title">Two shifts. One goal.</h2>
+          <div class="shift-card" id="farm-card">
+            <span class="shift-symbol sun" aria-hidden="true">☀</span>
+            <div><h3>Day / Farm shift</h3><p>Harvest crops and jump over crates.</p></div>
+            <strong>+J$60</strong>
+          </div>
+          <div class="shift-card" id="night-card">
+            <span class="shift-symbol moon" aria-hidden="true">☾</span>
+            <div><h3>Night / Taxi shift</h3><p>Drive the Probox. Pick up fares and dodge traffic.</p></div>
+            <strong>+J$100</strong>
+          </div>
+          <p class="penalty"><span aria-hidden="true">⚠</span> Hits cost J$75. Keep moving.</p>
+        </section>
+        <button type="button" id="restart" class="restart" hidden>Restart game <span aria-hidden="true">↻</span></button>
+      </aside>
+    </div>
+  </main>
+  <dialog id="help" aria-labelledby="help-title">
+    <button class="close" type="button" aria-label="Close">×</button>
+    <p class="eyebrow">GAME GUIDE</p>
+    <h2 id="help-title">How to play</h2>
+    <ul>
+      <li>Use ← and →, swipe, or tap the arrow buttons to change lanes.</li>
+      <li>During the farm shift, run through crops to collect them. Press ↑ or swipe up to jump over crates.</li>
+      <li>At night, steer the Toyota Probox toward waiting fares and away from traffic.</li>
+      <li>Reach J$2,500 across as many shifts as you need. Press Esc to pause.</li>
+    </ul>
+    <button type="button" class="primary" id="close-help">Back to game <span aria-hidden="true">→</span></button>
+  </dialog>
+  <dialog id="victory" class="victory" aria-labelledby="victory-title">
+    <div class="flag victory-flag" role="img" aria-label="Jamaican flag"></div>
+    <p class="eyebrow">CASH GOAL REACHED</p>
+    <h2 id="victory-title">Ayye, mi come from Jamaica nd mi di poor but now mi rich aye</h2>
+    <p class="win-total" id="win-total"></p>
+    <button type="button" class="primary" id="play-again">Play again <span aria-hidden="true">↻</span></button>
+  </dialog>
+  <p id="announcement" class="sr-only" aria-live="polite"></p>
+</body>
+</html>
