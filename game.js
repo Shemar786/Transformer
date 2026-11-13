@@ -294,7 +294,7 @@ document.addEventListener("keydown", (event) => {
   }
 });
 stageCanvas.addEventListener("pointerdown", (event) => {
-  if (state.mode !== "playing" || !event.isPrimary) return;
+  if (state.mode !== "playing" || !event.isPrimary || event.button !== 0) return;
   pointer = { x: event.clientX, y: event.clientY, id: event.pointerId };
   stageCanvas.setPointerCapture(event.pointerId);
 });
@@ -302,11 +302,24 @@ stageCanvas.addEventListener("pointerup", (event) => {
   if (pointer?.id !== event.pointerId) return;
   const dx = event.clientX - pointer.x;
   const dy = event.clientY - pointer.y;
-  if (Math.abs(dx) > 23 && Math.abs(dx) > Math.abs(dy)) move(Math.sign(dx));
-  else if (dy < -23) move("jump");
   pointer = null;
+  if (state.mode !== "playing") return;
+  if (Math.hypot(dx, dy) <= 18) {
+    const bounds = stageCanvas.getBoundingClientRect();
+    const x = (event.clientX - bounds.left) / bounds.width;
+    const y = (event.clientY - bounds.top) / bounds.height;
+    if (x >= 0 && x <= 1 && y >= 0 && y <= 1) state.lane = laneAtScreenPoint(x, y);
+  } else if (Math.abs(dx) > 23 && Math.abs(dx) > Math.abs(dy)) {
+    move(Math.sign(dx));
+  } else if (dy < -23 && Math.abs(dy) >= Math.abs(dx)) {
+    move("jump");
+  }
 });
-stageCanvas.addEventListener("lostpointercapture", () => { pointer = null; });
+for (const type of ["pointercancel", "lostpointercapture"]) {
+  stageCanvas.addEventListener(type, (event) => {
+    if (pointer?.id === event.pointerId) pointer = null;
+  });
+}
 document.addEventListener("visibilitychange", () => {
   if (document.hidden && state.mode === "playing") pauseGame();
 });

@@ -2,6 +2,18 @@
 
 const stageCanvas = document.getElementById("track");
 const paint = stageCanvas.getContext("2d");
+const horizonRatio = .29;
+const roadDepthHeight = (1 - horizonRatio) * .85;
+const roadHalfWidth = (depth) => .037 + depth * .51;
+const laneWidth = .62;
+
+function laneAtScreenPoint(x, y) {
+  const depth = Math.max(0, (y - horizonRatio) / roadDepthHeight);
+  const boundary = roadHalfWidth(depth) * laneWidth / 2;
+  if (x < .5 - boundary) return -1;
+  if (x > .5 + boundary) return 1;
+  return 0;
+}
 const artwork = Object.fromEntries(["farmer", "probox"].map((name) => {
   const image = new Image();
   image.src = "assets/" + name + ".webp";
@@ -156,12 +168,12 @@ function drawTrack(state) {
   const {width,height}=fitCanvas();
   if (!width || !height) return;
   const night=state.shift === "night";
-  const horizon=height*.29;
+  const horizon=height*horizonRatio;
   const depth=(z)=>Math.pow(Math.max(0,z),1.53);
-  const half=(z)=>width*(.037+depth(z)*.51);
-  const yAt=(z)=>horizon+depth(z)*(height-horizon)*.85;
+  const half=(z)=>width*roadHalfWidth(depth(z));
+  const yAt=(z)=>horizon+depth(z)*height*roadDepthHeight;
   const center=width*.5;
-  const laneAt=(lane,z)=>center+lane*half(z)*.62;
+  const laneAt=(lane,z)=>center+lane*half(z)*laneWidth;
   const motion=state.elapsed*(night?.84:.71);
   backdrop(width,height,horizon,night);
   path([[center-half(0)-5,horizon],[center+half(0)+5,horizon],[width,height],[0,height]],night?"#705f51":"#a1673c");
@@ -183,7 +195,7 @@ function drawTrack(state) {
     }
     const end=Math.min(1.13,z+.035);
     for (const line of [-1,1]) {
-      const offset=(t)=>center+line*half(t)*.31;
+      const offset=(t)=>center+line*half(t)*laneWidth/2;
       const thickness=(t)=>Math.max(1,half(t)*.014);
       path([[offset(z)-thickness(z),y],[offset(z)+thickness(z),y],
         [offset(end)+thickness(end),yAt(end)],[offset(end)-thickness(end),yAt(end)]],night?"#e4d4a8":"#ffe1a580");
