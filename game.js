@@ -1,329 +1,266 @@
 "use strict";
 
 const byId = (id) => document.getElementById(id);
-const goal = 2500;
-const hitCost = 75;
-const shifts = {
-  day: { name: "Farm shift", icon: "☀", duration: 24, interval: .9, speed: .37, reward: 60 },
-  night: { name: "Taxi shift", icon: "☾", duration: 26, interval: .8, speed: .44, reward: 100 }
+const items = {
+  tag: ["Baggage tag","Baggage tags","Tags"],
+  fuel: ["Fuel cell","Fuel cells","Fuel"],
+  parcel: ["Express parcel","Express parcels","Parcels"],
+  kit: ["Flight kit","Flight kits","Kits"],
+  ticket: ["Golden Ticket","Golden Tickets","Ticket"]
 };
-const currency = new Intl.NumberFormat("en-JM");
-const money = (amount) => "J$" + currency.format(amount);
-const clamp = (x, low, high) => Math.min(high, Math.max(low, x));
-let sound = false;
-let audioContext;
-let pointer;
-let state = freshState();
-let lastTime = performance.now();
+const offers = [
+  { id:"parcel", cost:{tag:3}, result:2 },
+  { id:"kit", cost:{parcel:2,fuel:1}, result:1 },
+  { id:"ticket", cost:{kit:2,fuel:2}, result:1 }
+];
+const plural = (key, n) => items[key][n === 1 ? 0 : 1];
+const describe = (goods) => Object.entries(goods).map(([key, n]) => n + " " + plural(key, n)).join(" + ");
+const exchange = byId("exchange");
+const help = byId("help");
+const victory = byId("victory");
+let flight = newFlight();
+let pendingTrade = null;
 let frameId = null;
+let lastTime = 0;
+let pointer = null;
 
-function readBest() {
-  try { return Math.max(0, Number(localStorage.getItem("transformer-money-best")) || 0); }
-  catch { return 0; }
-}
-
-function freshState() {
+function newFlight() {
   return {
-    mode: "intro", shift: "day", cash: 0, best: readBest(), remaining: shifts.day.duration,
-    elapsed: 0, spawnIn: .15, lane: 0, playerX: 0, jump: 0, hit: 0,
-    items: [], feedback: null, streak: 0
+    status:"intro", elapsed:0, travel:0, lane:0, position:0, climb:0, hit:0, nextRow:.2,
+    items:[], feedback:null, cargo:{tag:0,fuel:0,parcel:0,kit:0,ticket:0}
   };
 }
 
-function tone(kind) {
-  if (!sound || !audioContext || audioContext.state !== "running") return;
-  const notes = { pickup: [520, 730], hit: [155, 90], shift: [350, 440, 590], win: [392, 494, 587, 784] }[kind];
-  notes.forEach((note, i) => {
-    const now = audioContext.currentTime + i * .085;
-    const oscillator = audioContext.createOscillator();
-    const level = audioContext.createGain();
-    oscillator.type = kind === "hit" ? "triangle" : "sine";
-    oscillator.frequency.value = note;
-    level.gain.setValueAtTime(.001, now);
-    level.gain.exponentialRampToValueAtTime(.12, now + .015);
-    level.gain.exponentialRampToValueAtTime(.001, now + .14);
-    oscillator.connect(level);
-    level.connect(audioContext.destination);
-    oscillator.start(now);
-    oscillator.stop(now + .15);
+function updateTradeBoard() {
+  Object.keys(flight.cargo).filter(key => key !== "ticket").forEach((key) => {
+    byId("cargo-" + key).textContent = flight.cargo[key];
   });
+  offers.forEach((offer) => { byId("trade-" + offer.id).disabled = !canTrade(offer); });
 }
 
-function updateCash() {
-  byId("cash").textContent = money(state.cash);
-  byId("best").textContent = money(state.best);
-  byId("progress").value = Math.min(goal, state.cash);
-  byId("progress-text").textContent = Math.min(100, Math.floor(state.cash / goal * 100)) + "% to goal";
-  const combo = byId("combo");
-  combo.hidden = state.streak < 3;
-  combo.textContent = state.streak + " in a row";
-}
-
-function updateShift() {
-  const shift = shifts[state.shift];
-  byId("shift-icon").textContent = shift.icon;
-  byId("shift-label").textContent = shift.name;
-  byId("farm-card").classList.toggle("active", state.shift === "day");
-  byId("night-card").classList.toggle("active", state.shift === "night");
-  updateClock();
-}
-
-function updateClock() {
-  const seconds = Math.max(0, Math.ceil(state.remaining)) + "s";
-  if (byId("clock").textContent !== seconds) byId("clock").textContent = seconds;
+function canTrade(offer) {
+  return Object.entries(offer.cost).every(([key, quantity]) => flight.cargo[key] >= quantity);
 }
 
 function announce(text) {
   byId("announcement").textContent = text;
 }
 
-function startGame() {
-  state = freshState();
-  state.mode = "playing";
+function showFeedback(text, color = "#ffdb76") {
+  flight.feedback = {text,color,life:1};
+}
+
+function updateDistance() {
+  const distance = Math.floor(flight.travel) + " m";
+  if (byId("distance").textContent !== distance) byId("distance").textContent = distance;
+}
+
+function startFlight() {
+  flight = newFlight();
+  pointer = null;
   byId("intro").hidden = true;
   byId("hud").hidden = false;
   byId("restart").hidden = false;
-  byId("stage-message").hidden = true;
-  byId("pause").disabled = false;
-  updateCash();
-  updateShift();
-  announce("Farm shift started.");
-  focusTrack();
-  requestFrame();
+  updateTradeBoard();
+  updateDistance();
+  resumeFlight();
+  announce("Flight started.");
 }
 
-function focusTrack() {
-  stageCanvas.focus({ preventScroll: true });
-}
-
-function message(kicker, title, copy, resumeLabel, driver = false) {
-  byId("message-kicker").textContent = kicker;
-  byId("message-title").textContent = title;
-  byId("message-copy").textContent = copy;
-  byId("driver-transition").hidden = !driver;
-  byId("resume").hidden = !resumeLabel;
-  byId("resume").textContent = resumeLabel ? resumeLabel + " →" : "";
-  byId("stage-message").hidden = false;
-  if (resumeLabel) byId("resume").focus({ preventScroll: true });
-}
-
-function switchShift() {
-  state.shift = state.shift === "day" ? "night" : "day";
-  const night = state.shift === "night";
-  state.remaining = shifts[state.shift].duration;
-  state.spawnIn = .24;
-  state.items = [];
-  state.lane = state.playerX = state.jump = state.hit = 0;
-  state.feedback = null;
-  state.mode = "between";
-  byId("pause").disabled = true;
-  updateShift();
-  drawTrack(state);
-  tone("shift");
-  const title = night ? "Probox time." : "Back to the farm.";
-  message(night ? "SUNSET · TAXI SHIFT" : "SUNRISE · FARM SHIFT", title,
-    night ? "Shrink into driver mode, buckle up, and pick up fares." : "Clock in and gather the next harvest.",
-    night ? "Start taxi shift" : "Start farm shift", night);
-  announce(title);
-}
-
-function resumeGame() {
-  if (state.mode !== "paused" && state.mode !== "between") return;
-  state.mode = "playing";
-  byId("stage-message").hidden = true;
-  byId("pause").disabled = false;
-  focusTrack();
-  requestFrame();
-}
-
-function pauseGame() {
-  if (state.mode === "paused") {
-    resumeGame();
-    return;
-  }
-  if (state.mode !== "playing") return;
-  state.mode = "paused";
-  message("SHIFT ON HOLD", "Paused", "Your cash and time are right where you left them.", "Resume");
-}
-
-function win() {
-  state.mode = "won";
-  byId("pause").disabled = true;
-  byId("win-total").textContent = money(state.cash) + " earned across both shifts.";
-  byId("victory").showModal();
-  tone("win");
-  announce("Cash goal reached. You won.");
-}
-
-function changeCash(delta) {
-  state.cash = Math.max(0, state.cash + delta);
-  if (state.cash > state.best) {
-    state.best = state.cash;
-    try { localStorage.setItem("transformer-money-best", String(state.best)); } catch {}
-  }
-  state.feedback = { text: (delta < 0 ? "−" : "+") + money(Math.abs(delta)), positive: delta >= 0, life: 1 };
-  updateCash();
-  if (state.cash >= goal) win();
-}
-
-function move(action) {
-  if (state.mode !== "playing") return;
-  if (action === "jump") {
-    if (state.shift === "day" && state.jump === 0) state.jump = .70;
-    return;
-  }
-  state.lane = clamp(state.lane + Number(action), -1, 1);
-}
-
-function spawnRow() {
-  const lanes = [-1, 0, 1];
-  const rewardLane = lanes[Math.floor(Math.random() * lanes.length)];
-  const free = lanes.filter((lane) => lane !== rewardLane);
-  state.items.push({ lane: rewardLane, z: 0, kind: "reward" });
-  if (Math.random() < .82) {
-    const hazardLane = free.splice(Math.floor(Math.random() * free.length), 1)[0];
-    state.items.push({ lane: hazardLane, z: 0, kind: "hazard" });
-  }
-  if (state.shift === "night" && Math.random() < .19 && free.length) {
-    state.items.push({ lane: free[0], z: 0, kind: "hazard" });
-  }
-}
-
-function update(dt) {
-  const shift = shifts[state.shift];
-  state.elapsed += dt;
-  state.remaining -= dt;
-  state.spawnIn -= dt;
-  state.playerX += (state.lane - state.playerX) * Math.min(1, dt * 13);
-  state.jump = Math.max(0, state.jump - dt);
-  state.hit = Math.max(0, state.hit - dt);
-  if (state.feedback) {
-    state.feedback.life -= dt * 1.35;
-    if (state.feedback.life <= 0) state.feedback = null;
-  }
-  if (state.spawnIn <= 0 && state.remaining > 2.7) {
-    spawnRow();
-    state.spawnIn += shift.interval;
-  }
-
-  for (const item of state.items) {
-    item.z += shift.speed * dt;
-    if (item.checked || item.z < .89) continue;
-    item.checked = true;
-    if (Math.abs(item.lane - state.playerX) > .44) {
-      if (item.kind === "reward" && state.streak) {
-        state.streak = 0;
-        updateCash();
-      }
-      continue;
-    }
-    if (item.kind === "reward") {
-      item.collected = true;
-      state.streak++;
-      tone("pickup");
-      changeCash(shift.reward);
-      if (state.mode === "won") break;
-    } else if (state.jump <= .10 || state.jump >= .60) {
-      state.hit = .65;
-      state.streak = 0;
-      tone("hit");
-      if (state.cash > 0) changeCash(-Math.min(hitCost, state.cash));
-      else {
-        state.feedback = { text: "Hit!", positive: false, life: 1 };
-        updateCash();
-      }
-    }
-  }
-  state.items = state.items.filter((item) => !item.collected && item.z < 1.14);
-  updateClock();
-  if (state.mode === "playing" && state.remaining <= 0) switchShift();
-}
-
-function frame(time) {
-  frameId = null;
-  if (state.mode !== "playing") return;
-  const dt = Math.min(.035, (time - lastTime) / 1000);
-  lastTime = time;
-  update(dt);
-  drawTrack(state);
-  if (state.mode === "playing") frameId = requestAnimationFrame(frame);
-}
-
-function requestFrame() {
+function resumeFlight() {
+  flight.status = "flying";
+  byId("pause-panel").hidden = true;
+  canvas.focus({preventScroll:true});
   if (frameId !== null) cancelAnimationFrame(frameId);
   lastTime = performance.now();
   frameId = requestAnimationFrame(frame);
 }
 
-byId("start").addEventListener("click", startGame);
-byId("restart").addEventListener("click", startGame);
-byId("resume").addEventListener("click", resumeGame);
-byId("pause").addEventListener("click", pauseGame);
-byId("play-again").addEventListener("click", () => {
-  byId("victory").close();
-  startGame();
-});
-byId("victory").addEventListener("cancel", (event) => event.preventDefault());
-byId("help-button").addEventListener("click", () => {
-  if (state.mode === "playing") pauseGame();
-  byId("help").showModal();
-});
-byId("close-help").addEventListener("click", () => byId("help").close());
-byId("help").querySelector(".close").addEventListener("click", () => byId("help").close());
-byId("sound").addEventListener("click", () => {
-  if (!window.AudioContext) return;
-  sound = !sound;
-  if (sound) {
-    audioContext ??= new AudioContext();
-    audioContext.resume().catch(() => {});
-  }
-  byId("sound").setAttribute("aria-pressed", String(sound));
-  byId("sound").querySelector("span").textContent = sound ? "Sound on" : "Sound off";
-});
-
-document.querySelectorAll("[data-move]").forEach((button) => button.addEventListener("click", () => move(button.dataset.move)));
-document.addEventListener("keydown", (event) => {
-  if (byId("help").open || byId("victory").open) return;
-  const actions = { ArrowLeft: -1, a: -1, ArrowRight: 1, d: 1, ArrowUp: "jump", w: "jump", " ": "jump" };
-  if (event.key === "Escape" && (state.mode === "playing" || state.mode === "paused")) {
-    event.preventDefault();
-    pauseGame();
-  } else if (state.mode === "playing" && Object.hasOwn(actions, event.key) && !(event.key === " " && event.target.closest("button"))) {
-    event.preventDefault();
-    if (!event.repeat) move(actions[event.key]);
-  }
-});
-stageCanvas.addEventListener("pointerdown", (event) => {
-  if (state.mode !== "playing" || !event.isPrimary || event.button !== 0) return;
-  pointer = { x: event.clientX, y: event.clientY, id: event.pointerId };
-  stageCanvas.setPointerCapture(event.pointerId);
-});
-stageCanvas.addEventListener("pointerup", (event) => {
-  if (pointer?.id !== event.pointerId) return;
-  const dx = event.clientX - pointer.x;
-  const dy = event.clientY - pointer.y;
+function pauseFlight() {
+  if (flight.status !== "flying") return;
+  flight.status = "paused";
   pointer = null;
-  if (state.mode !== "playing") return;
-  if (Math.hypot(dx, dy) <= 18) {
-    const bounds = stageCanvas.getBoundingClientRect();
-    const x = (event.clientX - bounds.left) / bounds.width;
-    const y = (event.clientY - bounds.top) / bounds.height;
-    if (x >= 0 && x <= 1 && y >= 0 && y <= 1) state.lane = laneAtScreenPoint(x, y);
-  } else if (Math.abs(dx) > 23 && Math.abs(dx) > Math.abs(dy)) {
-    move(Math.sign(dx));
-  } else if (dy < -23 && Math.abs(dy) >= Math.abs(dx)) {
-    move("jump");
+  byId("pause-panel").hidden = false;
+  byId("resume").focus({preventScroll:true});
+}
+
+function openTrade(offer) {
+  if (!canTrade(offer) || !["flying","paused"].includes(flight.status)) return;
+  pendingTrade = {offer, resume:flight.status === "flying"};
+  flight.status = "trading";
+  pointer = null;
+  byId("exchange-title").textContent = plural(offer.id, offer.result);
+  byId("exchange-copy").textContent = "Give " + describe(offer.cost) + " in exchange for " +
+    offer.result + " " + plural(offer.id, offer.result) + ".";
+  exchange.showModal();
+}
+
+function completeTrade() {
+  const offer = pendingTrade?.offer;
+  if (!offer || !canTrade(offer)) return;
+  for (const [key, amount] of Object.entries(offer.cost)) flight.cargo[key] -= amount;
+  flight.cargo[offer.id] += offer.result;
+  updateTradeBoard();
+  if (offer.id === "ticket") {
+    pendingTrade = null;
+    flight.status = "won";
+    exchange.close();
+    victory.showModal();
+    announce("Golden Ticket acquired. You won.");
+  } else {
+    showFeedback("+" + offer.result + " " + plural(offer.id, offer.result));
+    announce("Trade complete. Received " + offer.result + " " + plural(offer.id, offer.result) + ".");
+    exchange.close();
+  }
+}
+
+function move(action) {
+  if (flight.status !== "flying") return;
+  if (action === "climb") {
+    if (!flight.climb) flight.climb = .72;
+  } else {
+    flight.lane = Math.max(-1,Math.min(1,flight.lane+Number(action)));
+  }
+}
+
+function spawnRow() {
+  const lanes = [-1,0,1];
+  const lane = lanes.splice(Math.floor(Math.random()*lanes.length),1)[0];
+  flight.items.push({lane,z:0,kind:Math.random()<.64?"tag":"fuel"});
+  if (Math.random()<.81) {
+    const other=lanes[Math.floor(Math.random()*lanes.length)];
+    flight.items.push({lane:other,z:0,kind:"barrier"});
+  }
+}
+
+function encounter(item) {
+  if (Math.abs(item.lane-flight.position)>.46) return;
+  if (item.kind === "barrier") {
+    if (flight.climb>.11 && flight.climb<.62) return;
+    const hadTag = flight.cargo.tag > 0;
+    flight.cargo.tag = Math.max(0,flight.cargo.tag-1);
+    flight.hit = .65;
+    showFeedback(hadTag?"−1 Tag":"Barrier hit","#ffa78e");
+  } else {
+    flight.cargo[item.kind]++;
+    item.collected = true;
+    showFeedback("+1 "+plural(item.kind,1),item.kind==="fuel"?"#a1edda":"#ffdb76");
+  }
+  updateTradeBoard();
+}
+
+function advance(dt) {
+  flight.elapsed += dt;
+  const speed = .38 + Math.min(.15,flight.elapsed*.0015);
+  flight.travel += dt*speed*54;
+  flight.position += (flight.lane-flight.position)*Math.min(1,dt*14);
+  flight.climb = Math.max(0,flight.climb-dt);
+  flight.hit = Math.max(0,flight.hit-dt);
+  if (flight.feedback) {
+    flight.feedback.life -= dt*1.25;
+    if (flight.feedback.life <= 0) flight.feedback = null;
+  }
+  flight.nextRow -= dt;
+  if (flight.nextRow <= 0) {
+    spawnRow();
+    flight.nextRow += .88;
+  }
+  for (const item of flight.items) {
+    item.z += dt*speed;
+    if (!item.checked && item.z>=flightDepth) {
+      item.checked=true;
+      encounter(item);
+    }
+  }
+  flight.items = flight.items.filter(item=>!item.collected&&item.z<1.14);
+  updateDistance();
+}
+
+function frame(now) {
+  frameId = null;
+  if (flight.status!=="flying") return;
+  const dt=Math.max(0,Math.min(.035,(now-lastTime)/1000));
+  lastTime=now;
+  advance(dt);
+  drawTrack(flight);
+  frameId=requestAnimationFrame(frame);
+}
+
+byId("inventory").innerHTML = Object.keys(items).filter(key=>key!=="ticket").map((key)=>
+  `<div class="inv-item"><strong id="cargo-${key}">0</strong><span>${items[key][2]}</span></div>`
+).join("");
+byId("recipes").innerHTML = offers.map((offer)=>
+  `<div class="recipe"><div><h3>${offer.result>1?offer.result+" ":""}${plural(offer.id,offer.result)}</h3><p>${describe(offer.cost)}</p></div>
+  <button id="trade-${offer.id}" type="button" aria-label="Trade for ${plural(offer.id,offer.result)}" disabled>Trade</button></div>`
+).join("");
+
+offers.forEach((offer)=>byId("trade-"+offer.id).addEventListener("click",()=>openTrade(offer)));
+byId("start").addEventListener("click",startFlight);
+byId("restart").addEventListener("click",startFlight);
+byId("resume").addEventListener("click",resumeFlight);
+byId("pause").addEventListener("click",pauseFlight);
+byId("help-button").addEventListener("click",()=>{
+  pauseFlight();
+  help.showModal();
+});
+help.querySelectorAll("button").forEach((button)=>button.addEventListener("click",()=>help.close()));
+exchange.querySelector(".close").addEventListener("click",()=>exchange.close());
+byId("confirm-trade").addEventListener("click",completeTrade);
+exchange.addEventListener("close",()=>{
+  if (!pendingTrade) return;
+  const {resume}=pendingTrade;
+  pendingTrade=null;
+  if(resume) resumeFlight();
+  else flight.status="paused";
+});
+byId("again").addEventListener("click",()=>{
+  victory.close();
+  startFlight();
+});
+victory.addEventListener("cancel",event=>event.preventDefault());
+
+document.querySelectorAll("[data-move]").forEach((button)=>button.addEventListener("click",()=>move(button.dataset.move)));
+document.addEventListener("keydown",event=>{
+  if(help.open||exchange.open||victory.open) return;
+  const actions={ArrowLeft:-1,a:-1,ArrowRight:1,d:1,ArrowUp:"climb",w:"climb"," ":"climb"};
+  if(event.key==="Escape"&&flight.status==="flying") {
+    event.preventDefault();
+    pauseFlight();
+  } else if(event.key==="Escape"&&flight.status==="paused") {
+    event.preventDefault();
+    resumeFlight();
+  } else if(flight.status==="flying"&&Object.hasOwn(actions,event.key)&&!(event.key===" "&&event.target.closest("button"))) {
+    event.preventDefault();
+    if(!event.repeat) move(actions[event.key]);
   }
 });
-for (const type of ["pointercancel", "lostpointercapture"]) {
-  stageCanvas.addEventListener(type, (event) => {
-    if (pointer?.id === event.pointerId) pointer = null;
-  });
-}
-document.addEventListener("visibilitychange", () => {
-  if (document.hidden && state.mode === "playing") pauseGame();
+canvas.addEventListener("pointerdown",event=>{
+  if(flight.status!=="flying"||!event.isPrimary||event.button!==0) return;
+  pointer={x:event.clientX,y:event.clientY,id:event.pointerId};
+  canvas.setPointerCapture(event.pointerId);
 });
-new ResizeObserver(() => {
-  if (state.mode !== "playing" && state.mode !== "intro") drawTrack(state);
-}).observe(stageCanvas);
-updateCash();
+canvas.addEventListener("pointerup",event=>{
+  if(pointer?.id!==event.pointerId) return;
+  const dx=event.clientX-pointer.x;
+  const dy=event.clientY-pointer.y;
+  pointer=null;
+  if(flight.status!=="flying") return;
+  if(Math.hypot(dx,dy)<=18) {
+    const bounds=canvas.getBoundingClientRect();
+    const x=(event.clientX-bounds.left)/bounds.width;
+    const y=(event.clientY-bounds.top)/bounds.height;
+    if(x>=0&&x<=1&&y>=0&&y<=1) flight.lane=laneAtScreenPoint(x,y);
+  } else if(Math.abs(dx)>23&&Math.abs(dx)>Math.abs(dy)) {
+    move(Math.sign(dx));
+  } else if(dy<-23&&Math.abs(dy)>=Math.abs(dx)) {
+    move("climb");
+  }
+});
+for(const event of ["pointercancel","lostpointercapture"]) {
+  canvas.addEventListener(event,({pointerId})=>{if(pointer?.id===pointerId)pointer=null;});
+}
+document.addEventListener("visibilitychange",()=>{if(document.hidden)pauseFlight();});
+new ResizeObserver(()=>{
+  if(flight.status!=="intro"&&flight.status!=="flying") drawTrack(flight);
+}).observe(canvas);
+updateTradeBoard();
